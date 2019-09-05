@@ -2,10 +2,11 @@
 
 import torch
 import numpy as np
+import time
 
 
 class Model:
-    def __init__(self, lr, emb_size, context_size):
+    def __init__(self, lr, emb_size, context_size, device):
         """
         :param: lr(learning rate),
                 emb_size(nodes in hidden layer),
@@ -15,43 +16,70 @@ class Model:
         self.lr = lr
         self.emb_size = emb_size  # hidden layer size
         self.context_size = context_size
+        self.device = device
 
-        # initialise first weight matrix w1 with random values b/w 0 & 1; shape:(vocab_size x embedding_dim)
-        # and similarly 2nd matrix w2; shape : (embedding_dim x vocab_size)
-        self.w1 = torch.rand(self.voc_size, self.emb_size)  # V x N
-        self.w2 = torch.rand(self.emb_size, self.voc_size)  # N x V
-
-        self.word2idx = {}
-        self.word2cnt = {}
+        self.word2idx = {}  # word:[id, frequency]
+        self.idx2word = {}  # id:word mapping
+        self.corpus_idx = []  # represent words in corpus as numbers,store unique index for each word in corpus
         self.voc_size = 0
 
     def extract_unique_words(self, corpus, threshold=10):
-        # self.voc_size = 0
+        print("1")
         for word in corpus.strip().split():
-            if word not in self.word2cnt:
-                self.word2cnt[word] = 1
-            else:
-                self.word2cnt[word] += 1
-
-        for word in self.word2cnt.keys():
-            # if the frequency of word is above threshold, then keep it and assign it an index, else discard it
-            if self.word2cnt[word] >= threshold:
-                self.word2idx[word] = self.voc_size
+            if word not in self.word2idx:
+                # first index of the value's list stores the word 2 index mapping and 2nd stores the frequency
+                self.word2idx[word] = [self.voc_size, 1]
+                self.corpus_idx.append(self.voc_size)
                 self.voc_size += 1
-        # return self.word2idx, self.voc_size
+            else:
+                self.corpus_idx.append(self.word2idx[word][0])  # store corr id already saved in word2idx
+                self.word2idx[word][1] += 1  # increase the word frequency
+        print("2")
+        id = 0
+        d = dict()  # temporary dict to hold frequent words and their index
+        for word in self.word2idx.keys():
+            # if word frequency is above threshold, add to d
+            if self.word2idx[word][1] >= threshold:
+                d[word] = self.word2idx[word][0]
+                self.idx2word[id] = word  # store id:word only for frequent words
+                id += 1
+        del self.word2idx
+        self.word2idx = d
+        print("4")
+        # in corpus_idx, only keep those indices which are present in idx2word dict(indices corr to frequent words)
+        self.corpus_idx = [ind for ind in self.corpus_idx if ind in self.idx2word]
+        self.voc_size = len(self.word2idx)
+        print("vocabulary size : {}, word2idx len : {},idx2word len : {},len of corpus_idx : {}".format(
+            self.voc_size,
+            len(self.word2idx),
+            len(self.idx2word),
+            len(self.corpus_idx),
+        ))
 
-    def forward(self, k, indices):
+    def forward(self, k, context_words):
         '''
         :param : k(index of center word), indices(list of indices of context words),
         1. pick kth row of w1 (contains N values) - center word representation of input word - h(size : 1 x N)
         2. for j in vocab(output layer): pick jth col of w2(o), find Y[j] = exp(h.o)
         3. normaliser = sum(Y)
-        4. for j in vocab(output layer) :
+        4. Y = Y/normaliser
+        5. for j in vocab(output layer) :
             a. if j in indices, e[j] = e[j] + ( y[j] - 1 )
             b. else e[j] = e[j] + ( len(indices) * y[j] ) ; update the value that many times as there are context words
         :return: e(accumulated error); this will be back-propagated for each sample in trg data
         '''
-        pass
+        num_context_words = len(context_words)
+        h = self.w1[k].view(-1, self.emb_size)  # change to 2D type tensor
+        y = torch.exp(torch.mm(h, self.w2))  # 2D tensor of shape (1,voc_size)
+        normaliser = torch.sum(y).item()  # get sum result
+        y = torch.div(Y, normaliser).view(self.voc_size)  # 1D tensor of shape(voc_size)
+        error = torch.zeros(self.voc_size, dtype=torch.float16, device=self.device)  # 1D tensor of shape (voc_size)
+        for i in range(self.voc_size):
+            if i in context_words:
+                error[i] = error[i] + (y[i] - 1)
+            else:
+                error[i] = error[i] + (num_context_words * y[i] - 1)
+        return error
 
     def backprop(self, k, e, ):
         '''
@@ -63,20 +91,65 @@ class Model:
         '''
         pass
 
-    def train(self):
+    def train(self, epochs):
         '''
         :param: epochs
         1. initialise emb_mat(embedding matrix) = zeros(voc_size, emb_size)
         2. for each epoch :
-                for sentence in corpus:
-                    for k = 1 to len(sentence):
-                        k=center word
-                        context_words : get context_size words to the left and right of center word
-                        e = forward()
-                        backprop()
+                for k = 1 to len(words_in_corpus):
+                    k=center word
+                    context_words : get context_size words to the left and right of center word
+                    e = forward()
+                    backprop()
         3. update all values in emb_mat as : emb_mat[i][j] = w1[i][j] + w2[j][i];
                 (final representation of word w : add w's representations from both w1 and w2)
         :return: emb_mat
         '''
+        # initialise first weight matrix w1 with random values b/w 0 & 1; shape:(vocab_size x embedding_dim)
+        # and similarly 2nd matrix w2; shape : (embedding_dim x vocab_size)
+        self.w1 = torch.rand((self.voc_size, self.emb_size), dtype=torch.float16, device=device)  # V x N
+        self.w2 = torch.rand((self.emb_size, self.voc_size), dtype=torch.float16, device=device)  # N x V
+        emb_mat = torch.zeros((self.voc_size, self.emb_size), dtype=torch.float16, device=device)  # V x N
+        # print("corpus_idx : ", self.corpus_idx)
+        for _ in range(epochs):
+            words_in_corpus = len(self.corpus_idx)
+            for k in range(words_in_corpus):  # each word in corpus will act as center word
+                # if there exist "context_size" words to both left and right of center word
+                # slice1 = words_in_corpus[]
+                left_words = []
+                rt_words = []
+                # print(self.corpus_idx[k])
+                for i in range(1, self.context_size + 1):
+                    if k - i >= 0:
+                        left_words.append(self.corpus_idx[k - i])
+                    if k + i <= words_in_corpus - 1:
+                        rt_words.append(self.corpus_idx[k + i])
+                context_words = left_words + rt_words
+                error = self.forward(k, context_words)
+                # print("left words : ", left_words)
+                # print("right words : ", rt_words)
+                # print("index 0 word : ",self.idx2word[0])
+                # print("index 1 word : ", self.idx2word[1])
+                # print("index 2 word : ", self.idx2word[2])
+
+    def generate_trg_data(self, corpus):
+        '''
+        generate (center word, context_words) pairs
+        1.
+        :param corpus:
+        :return:
+        '''
 
         pass
+
+
+if __name__ == '__main__':
+    start = time.time()
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print("device available : ", device)
+    with open('../examples/word_language_model/my_data/train.txt') as file:
+        data = file.read()[:2000]
+        word2vec = Model(lr=0.001, emb_size=50, context_size=2, device=device)
+        word2vec.extract_unique_words(corpus=data, threshold=10)
+        word2vec.train(epochs=1)
+    print("time taken : ", time.time() - start)
