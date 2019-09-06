@@ -70,26 +70,42 @@ class Model:
         '''
         num_context_words = len(context_words)
         h = self.w1[k].view(-1, self.emb_size)  # change to 2D type tensor
-        y = torch.exp(torch.mm(h, self.w2))  # 2D tensor of shape (1,voc_size)
-        normaliser = torch.sum(y).item()  # get sum result
-        y = torch.div(Y, normaliser).view(self.voc_size)  # 1D tensor of shape(voc_size)
-        error = torch.zeros(self.voc_size, dtype=torch.float16, device=self.device)  # 1D tensor of shape (voc_size)
+        # y = torch.zeros((1, self.voc_size), dtype=torch.float32, device=self.device)
+        y = torch.zeros((1, self.voc_size), device=self.device)
+        # dot product of h and w2 ; torch.mm requires 2D tensors to multiply
+        y = torch.exp(torch.mm(h, self.w2))  # y is 2D tensor of shape (1,voc_size).
+        normaliser = torch.tensor(torch.sum(y).item(), dtype=torch.float64)  # get sum result
+        normaliser = torch.clamp(normaliser, max=4000000000)
+        print(type(normaliser))
+        print("normaliser value : {}".format(normaliser))
+        y = torch.div(y, normaliser).view(self.voc_size)  # convert to 1D tensor of shape(voc_size)
+        # error = torch.zeros(self.voc_size, dtype=torch.float32, device=self.device)  # 1D tensor of shape (voc_size)
+        error = torch.zeros(self.voc_size, device=self.device)  # 1D tensor of shape (voc_size)
         for i in range(self.voc_size):
             if i in context_words:
                 error[i] = error[i] + (y[i] - 1)
             else:
                 error[i] = error[i] + (num_context_words * y[i] - 1)
+        # check if all values of error are going to nan
+
+        print("error : ", error)
         return error
 
-    def backprop(self, k, e, ):
+    def backprop(self, k, error):
         '''
-        :param: k(center word index), e(accumulated error)
-        1. for j in vocab,for i in hidden_layer: w2[i][j] -= lr * e[j] * w1[k][i]
+        :param: k(center word index), error(accumulated error) of shape (voc_size)
+        1. for j in vocab,for i in hidden_layer: w2[i][j] -= lr * error[j] * w1[k][i]
         2. eh = zeros(N)
-        3. for i in hidden_layer : eh[i] = e.(ith row of w2), w1[k][i] -= lr * eh[i]
-        :return:
+        3. for i in hidden_layer : eh[i] = error.(ith row of w2), w1[k][i] -= lr * eh[i]
         '''
-        pass
+        for j in range(self.voc_size):
+            self.w2[:, j] = self.w2[:, j] - (torch.mul(self.lr, torch.mul(error[j].item(), self.w1[k])))
+        # eh = torch.zeros((1, self.emb_size), dtype=torch.float32, device=device)
+        eh = torch.zeros((1, self.emb_size), device=device)
+        # eh is 2D tensor shape :(1, emb_size)
+        eh = torch.mm(error.view(1, self.voc_size), torch.t(self.w2))  # dot product of error and w2.T(transpose)
+        self.w1[k] = self.w1[k] - torch.mul(self.lr, eh.view(self.emb_size))
+        # print("w1 weights : {}, w2 weights : {}".format(self.w1, self.w2))
 
     def train(self, epochs):
         '''
@@ -107,30 +123,38 @@ class Model:
         '''
         # initialise first weight matrix w1 with random values b/w 0 & 1; shape:(vocab_size x embedding_dim)
         # and similarly 2nd matrix w2; shape : (embedding_dim x vocab_size)
-        self.w1 = torch.rand((self.voc_size, self.emb_size), dtype=torch.float16, device=device)  # V x N
-        self.w2 = torch.rand((self.emb_size, self.voc_size), dtype=torch.float16, device=device)  # N x V
-        emb_mat = torch.zeros((self.voc_size, self.emb_size), dtype=torch.float16, device=device)  # V x N
-        # print("corpus_idx : ", self.corpus_idx)
+        # self.w1 = torch.rand((self.voc_size, self.emb_size), dtype=torch.float32, device=device)  # V x N
+        # self.w2 = torch.rand((self.emb_size, self.voc_size), dtype=torch.float32, device=device)  # N x V
+        # emb_mat = torch.zeros((self.voc_size, self.emb_size), dtype=torch.float32, device=device)  # V x N
+        self.w1 = torch.rand((self.voc_size, self.emb_size), device=device)  # V x N
+        self.w2 = torch.rand((self.emb_size, self.voc_size), device=device)  # N x V
+        emb_mat = torch.zeros((self.voc_size, self.emb_size), device=device)  # V x N
         for _ in range(epochs):
             words_in_corpus = len(self.corpus_idx)
-            for k in range(words_in_corpus):  # each word in corpus will act as center word
-                # if there exist "context_size" words to both left and right of center word
-                # slice1 = words_in_corpus[]
+            count = 1
+            for k in self.corpus_idx:  # each word in corpus will act as center word
+                print("k value : ", k)
                 left_words = []
                 rt_words = []
-                # print(self.corpus_idx[k])
                 for i in range(1, self.context_size + 1):
                     if k - i >= 0:
                         left_words.append(self.corpus_idx[k - i])
                     if k + i <= words_in_corpus - 1:
                         rt_words.append(self.corpus_idx[k + i])
                 context_words = left_words + rt_words
+                # print("center word : {}, context words : {}".format(k, context_words))
                 error = self.forward(k, context_words)
-                # print("left words : ", left_words)
-                # print("right words : ", rt_words)
-                # print("index 0 word : ",self.idx2word[0])
-                # print("index 1 word : ", self.idx2word[1])
-                # print("index 2 word : ", self.idx2word[2])
+                self.backprop(k, error)
+                print("finish updating weights for sample {}".format(count))
+                count += 1
+                print("------------------------------------------------------------------------")
+        emb_mat = self.w1 + torch.t(self.w2)
+        print("final embedding matrix : ", emb_mat)
+        # print("left words : ", left_words)
+        # print("right words : ", rt_words)
+        # print("index 0 word : ",self.idx2word[0])
+        # print("index 1 word : ", self.idx2word[1])
+        # print("index 2 word : ", self.idx2word[2])
 
     def generate_trg_data(self, corpus):
         '''
@@ -148,7 +172,7 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("device available : ", device)
     with open('../examples/word_language_model/my_data/train.txt') as file:
-        data = file.read()[:2000]
+        data = file.read()[:2000000]
         word2vec = Model(lr=0.001, emb_size=50, context_size=2, device=device)
         word2vec.extract_unique_words(corpus=data, threshold=10)
         word2vec.train(epochs=1)
