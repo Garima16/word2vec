@@ -1,7 +1,7 @@
 # implement Mikolov's skip-gram word embedding algorithm
 
 import torch
-import numpy as np
+import torch.nn.functional as F
 import time
 
 
@@ -73,12 +73,16 @@ class Model:
         # y = torch.zeros((1, self.voc_size), dtype=torch.float32, device=self.device)
         y = torch.zeros((1, self.voc_size), device=self.device)
         # dot product of h and w2 ; torch.mm requires 2D tensors to multiply
-        y = torch.exp(torch.mm(h, self.w2))  # y is 2D tensor of shape (1,voc_size).
-        normaliser = torch.tensor(torch.sum(y).item(), dtype=torch.float64)  # get sum result
-        normaliser = torch.clamp(normaliser, max=4000000000)
-        print(type(normaliser))
-        print("normaliser value : {}".format(normaliser))
-        y = torch.div(y, normaliser).view(self.voc_size)  # convert to 1D tensor of shape(voc_size)
+        o = torch.mm(h, self.w2)
+        y = F.softmax(o).view(self.voc_size)
+        print("y's shape : ", y.shape)
+        # y = torch.exp()  # y is 2D tensor of shape (1,voc_size).
+        # y = torch.clamp(y, max=100000)
+        # normaliser = torch.tensor(torch.sum(y).item())  # get sum result
+        # normaliser = torch.clamp(normaliser, max=400000000)
+        # print(type(normaliser))
+        # print("normaliser value : {}".format(normaliser))
+        # y = torch.div(y, normaliser).view(self.voc_size)  # convert to 1D tensor of shape(voc_size)
         # error = torch.zeros(self.voc_size, dtype=torch.float32, device=self.device)  # 1D tensor of shape (voc_size)
         error = torch.zeros(self.voc_size, device=self.device)  # 1D tensor of shape (voc_size)
         for i in range(self.voc_size):
@@ -128,6 +132,7 @@ class Model:
         # emb_mat = torch.zeros((self.voc_size, self.emb_size), dtype=torch.float32, device=device)  # V x N
         self.w1 = torch.rand((self.voc_size, self.emb_size), device=device)  # V x N
         self.w2 = torch.rand((self.emb_size, self.voc_size), device=device)  # N x V
+        print("w2 weights: ", self.w2)
         emb_mat = torch.zeros((self.voc_size, self.emb_size), device=device)  # V x N
         for _ in range(epochs):
             words_in_corpus = len(self.corpus_idx)
