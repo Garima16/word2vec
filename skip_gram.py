@@ -79,9 +79,10 @@ class Model:
         # y = torch.div(y, normaliser).view(self.voc_size)  # convert to 1D tensor of shape(voc_size)
         # error = torch.zeros(self.voc_size, dtype=torch.float32, device=self.device)  # 1D tensor of shape (voc_size)
 
-        for i in range(self.voc_size):
-            self.error[i] = y[i] - 1 if i in context_words else num_context_words * y[i] - 1
-        # print("error : ", self.error)
+        for j in range(self.voc_size):
+            self.error[j] = y[j] - 1 + (num_context_words - 1) * y[j] if j in context_words else num_context_words * y[
+                j]
+            # print("error : ", self.error)
 
     def backward(self, k):
         '''
@@ -140,7 +141,7 @@ class Model:
                 # print("sample {} done".format(count))
                 count += 1
 
-        self.emb_mat = self.w1 + torch.t(self.w2)
+        self.emb_mat = self.w1 + torch.t(self.w2)  # add W1 and transpose of W2
         # print("final embedding matrix : ", emb_mat)
         with open("embedding_matrix3.txt", 'w') as out:
             global start
@@ -169,6 +170,6 @@ if __name__ == '__main__':
         word2vec = Model(lr=0.001, emb_size=20, context_size=2, device=device)
         word2vec.extract_unique_words(corpus=data, threshold=10)
         word2vec.train(epochs=1)
-    s = "time taken : " +  str(time.time() - start)
+    s = "time taken : " + str(time.time() - start)
     sys.stdout.write("first")
     sys.stdout.write(s)
